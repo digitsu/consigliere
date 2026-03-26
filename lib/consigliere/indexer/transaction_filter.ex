@@ -14,6 +14,8 @@ defmodule Consigliere.Indexer.TransactionFilter do
   @addresses_table :watched_addresses
   @tokens_table :watched_tokens
 
+  require Logger
+
   ## ── Client API ──
 
   @doc """
@@ -75,6 +77,36 @@ defmodule Consigliere.Indexer.TransactionFilter do
     :ets.member(@tokens_table, token_id)
   end
 
+  @doc """
+  Submits a raw transaction binary for asynchronous filtering.
+  The GenServer will parse the transaction, check outputs against watched
+  addresses and tokens, and forward matches to TransactionProcessor.
+
+  ## Parameters
+    - `raw_tx_binary` — raw transaction bytes
+
+  ## Returns
+    :ok
+  """
+  def process_raw_tx(raw_tx_binary) do
+    GenServer.cast(__MODULE__, {:process_raw_tx, raw_tx_binary})
+  end
+
+  @doc """
+  Synchronously checks a parsed `%BSV.Transaction{}` against all watched
+  addresses and STAS token IDs. Useful for testing and one-off queries.
+
+  ## Parameters
+    - `tx` — a `%BSV.Transaction{}` struct
+
+  ## Returns
+    `{matched_addresses, matched_tokens}` where each is a list of strings.
+  """
+  @spec matches?(BSV.Transaction.t()) :: {[String.t()], [String.t()]}
+  def matches?(tx) do
+    scan_outputs(tx.outputs)
+  end
+
   ## ── Server Callbacks ──
 
   @impl true
@@ -100,11 +132,95 @@ defmodule Consigliere.Indexer.TransactionFilter do
   end
 
   @impl true
+  def handle_cast({:process_raw_tx, raw_tx_binary}, state) do
+    case BSV.Transaction.from_binary(raw_tx_binary) do
+      {:ok, tx, _rest} ->
+        {matched_addresses, matched_tokens} = scan_outputs(tx.outputs)
+
+        if matched_addresses != [] or matched_tokens != [] do
+          Logger.info(
+            "TransactionFilter matched addrs=#{inspect(matched_addresses)} tokens=#{inspect(matched_tokens)}"
+          )
+
+          GenServer.cast(
+            Consigliere.Indexer.TransactionProcessor,
+            {:index_tx, tx, matched_addresses, matched_tokens}
+          )
+        end
+
+      {:error, reason} ->
+        Logger.warning("TransactionFilter failed to parse raw tx: #{inspect(reason)}")
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
   end
 
   ## ── Private Helpers ──
+
+  # Iterates over all transaction outputs and collects watched addresses
+  # and STAS/dSTAS token IDs that appear in the locking scripts.
+  #
+  # Returns {[matched_address_strings], [matched_token_id_strings]}.
+  @spec scan_outputs([BSV.Transaction.Output.t()]) :: {[String.t()], [String.t()]}
+  defp scan_outputs(outputs) do
+    Enum.reduce(outputs, {[], []}, fn output, {addrs_acc, tokens_acc} ->
+      script = output.locking_script
+      script_binary = BSV.Script.to_binary(script)
+
+      # Check for watched address (P2PKH)
+      addrs_acc = check_address(script, addrs_acc)
+
+      # Check for watched STAS / dSTAS token
+      tokens_acc = check_token(script_binary, tokens_acc)
+
+      {addrs_acc, tokens_acc}
+    end)
+    |> then(fn {addrs, tokens} -> {Enum.uniq(addrs), Enum.uniq(tokens)} end)
+  end
+
+  # Extracts a P2PKH address from a locking script and appends it to the
+  # accumulator if it exists in the :watched_addresses ETS table.
+  @spec check_address(BSV.Script.t(), [String.t()]) :: [String.t()]
+  defp check_address(script, acc) do
+    case BSV.Script.Address.from_script(script) do
+      {:ok, address} ->
+        if :ets.member(@addresses_table, address), do: [address | acc], else: acc
+
+      :error ->
+        acc
+    end
+  end
+
+  # Parses a locking script binary for STAS or dSTAS token data and appends
+  # the token ID string to the accumulator if it is in :watched_tokens.
+  @spec check_token(binary(), [String.t()]) :: [String.t()]
+  defp check_token(script_binary, acc) do
+    parsed = BSV.Tokens.Script.Reader.read_locking_script(script_binary)
+
+    case parsed.script_type do
+      type when type in [:stas, :stas_btg] ->
+        token_id_str = BSV.Tokens.TokenId.to_string(parsed.stas.token_id)
+        if :ets.member(@tokens_table, token_id_str), do: [token_id_str | acc], else: acc
+
+      :dstas ->
+        # dSTAS fields lack a token_id; use the owner hash hex as identifier
+        owner_hex = Base.encode16(parsed.dstas.owner, case: :lower)
+        if :ets.member(@tokens_table, owner_hex), do: [owner_hex | acc], else: acc
+
+      _ ->
+        acc
+    end
+  rescue
+    # Malformed scripts that the reader can't handle
+    e ->
+      Logger.debug("TransactionFilter token parse error: #{inspect(e)}")
+      acc
+  end
 
   # Loads all watched addresses and tokens from the database into ETS tables
   # on startup, so the filter is immediately ready for matching.
