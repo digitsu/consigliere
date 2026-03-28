@@ -14,7 +14,7 @@ defmodule Consigliere.Indexer.B2gResolver do
 
   alias Consigliere.Repo
   alias Consigliere.Schema.MetaTransaction
-  alias Consigliere.Blockchain.RpcClient
+  alias Consigliere.Blockchain.{RpcClient, JungleBusClient}
   alias Consigliere.Infra.WhatsOnChain
   alias Consigliere.Tokens.Classifier
 
@@ -111,16 +111,22 @@ defmodule Consigliere.Indexer.B2gResolver do
   end
 
   defp fetch_remote(txid_hex) do
-    # Try RPC first
+    # Try RPC first, then JungleBus, then WoC
     case RpcClient.get_raw_transaction(txid_hex, false) do
       {:ok, raw_hex} ->
         parse_hex(raw_hex)
 
       {:error, _} ->
-        # Fallback to WhatsOnChain
-        case WhatsOnChain.get_raw_tx(txid_hex) do
-          {:ok, raw_hex} -> parse_hex(raw_hex)
-          {:error, _} = err -> err
+        case JungleBusClient.get_raw_transaction(txid_hex) do
+          {:ok, raw_hex} ->
+            parse_hex(raw_hex)
+
+          {:error, _} ->
+            # Final fallback: WhatsOnChain
+            case WhatsOnChain.get_raw_tx(txid_hex) do
+              {:ok, raw_hex} -> parse_hex(raw_hex)
+              {:error, _} = err -> err
+            end
         end
     end
   end

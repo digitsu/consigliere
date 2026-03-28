@@ -40,7 +40,8 @@ config :consigliere,
   ],
   jungle_bus: [
     enabled: System.get_env("JUNGLE_BUS_ENABLED", "false") == "true",
-    url: System.get_env("JUNGLE_BUS_URL")
+    url: System.get_env("JUNGLE_BUS_URL", "https://junglebus.gorillapool.io"),
+    subscription_id: System.get_env("JUNGLE_BUS_SUBSCRIPTION_ID")
   ]
 
 if config_env() == :prod do
