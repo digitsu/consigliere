@@ -62,8 +62,8 @@ defmodule ConsigliereWeb.WalletChannelTest do
     end
 
     test "broadcast replies ok", %{socket: socket} do
-      ref = push(socket, "broadcast", %{"hex" => "0100000001..."})
-      assert_reply ref, :ok, %{status: "not_implemented"}
+      ref = push(socket, "broadcast", %{"hex" => "0100000001" <> String.duplicate("00", 50)})
+      assert_reply ref, :ok, %{status: _, txid: _}
     end
   end
 end

@@ -1,21 +1,20 @@
 defmodule Consigliere.Services.SyncStatus do
   @moduledoc """
   Reports the chain synchronization status of the indexer.
-
   Compares the highest processed block against the node's chain tip.
-
-  TODO: Implement RPC chain tip comparison in Phase 2.
   """
 
   alias Consigliere.Repo
   alias Consigliere.Schema.BlockProcessContext
+  alias Consigliere.Blockchain.RpcClient
   import Ecto.Query
 
   @doc """
-  Returns current sync status including last processed block height.
+  Returns current sync status including last processed block height
+  and comparison with the node's chain tip.
 
   ## Returns
-    Map with :last_block_height, :last_block_hash, :is_synced fields.
+    Map with :last_block_height, :last_block_hash, :node_height, :is_synced, :blocks_behind
   """
   def get_status do
     last_block =
@@ -24,16 +23,36 @@ defmodule Consigliere.Services.SyncStatus do
       |> limit(1)
       |> Repo.one()
 
-    case last_block do
-      nil ->
-        %{last_block_height: 0, last_block_hash: nil, is_synced: false}
+    local_height =
+      case last_block do
+        nil -> 0
+        block -> block.height
+      end
 
-      block ->
-        %{
-          last_block_height: block.height,
-          last_block_hash: block.id,
-          is_synced: false
-        }
-    end
+    local_hash =
+      case last_block do
+        nil -> nil
+        block -> block.id
+      end
+
+    # Try to get node chain tip
+    {node_height, is_synced, blocks_behind} =
+      case RpcClient.get_block_count() do
+        {:ok, tip_height} ->
+          behind = tip_height - local_height
+          {tip_height, behind <= 1, behind}
+
+        {:error, _} ->
+          {nil, false, nil}
+      end
+
+    %{
+      last_block_height: local_height,
+      last_block_hash: local_hash,
+      node_height: node_height,
+      is_synced: is_synced,
+      blocks_behind: blocks_behind,
+      status: if(is_synced, do: "synced", else: "syncing")
+    }
   end
 end

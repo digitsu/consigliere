@@ -5,8 +5,6 @@ defmodule Consigliere.Indexer.TransactionFilter do
 
   ETS tables provide lock-free concurrent reads. Writes (admin adds/removes
   an address or token) are serialized through this GenServer.
-
-  TODO: Implement ETS table management and matching logic in Phase 2.
   """
 
   use GenServer

@@ -1,23 +1,65 @@
 defmodule Consigliere.Infra.Bitails do
   @moduledoc """
   REST client for the Bitails API.
-
-  Provides additional transaction data not available from the BSV node
-  or WhatsOnChain.
-
-  TODO: Implement Bitails API client in Phase 7.
+  Provides additional transaction data not available from the BSV node.
   """
+
+  require Logger
+
+  @base_url "https://api.bitails.io"
 
   @doc """
   Fetches transaction details from Bitails.
-
-  ## Parameters
-    - `txid` — transaction ID hex string
-
-  ## Returns
-    `{:ok, tx_data}` or `{:error, reason}`
   """
-  def get_tx(_txid) do
-    {:error, :not_implemented}
+  def get_tx(txid) do
+    url = "#{@base_url}/tx/#{txid}"
+
+    case Req.get(url, finch: Consigliere.Finch) do
+      {:ok, %Req.Response{status: 200, body: body}} when is_map(body) ->
+        {:ok, body}
+
+      {:ok, %Req.Response{status: status}} ->
+        {:error, {:http_error, status}}
+
+      {:error, reason} ->
+        Logger.warning("Bitails get_tx failed: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Fetches raw transaction hex from Bitails.
+  """
+  def get_raw_tx(txid) do
+    url = "#{@base_url}/tx/#{txid}/raw"
+
+    case Req.get(url, finch: Consigliere.Finch) do
+      {:ok, %Req.Response{status: 200, body: body}} when is_binary(body) ->
+        {:ok, String.trim(body)}
+
+      {:ok, %Req.Response{status: status}} ->
+        {:error, {:http_error, status}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Fetches address balance from Bitails.
+  """
+  def get_address_balance(address) do
+    url = "#{@base_url}/address/#{address}/balance"
+
+    case Req.get(url, finch: Consigliere.Finch) do
+      {:ok, %Req.Response{status: 200, body: body}} when is_map(body) ->
+        {:ok, body}
+
+      {:ok, %Req.Response{status: status}} ->
+        {:error, {:http_error, status}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 end
