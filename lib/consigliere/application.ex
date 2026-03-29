@@ -15,31 +15,44 @@ defmodule Consigliere.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      ConsigliereWeb.Telemetry,
-      Consigliere.Repo,
-      {DNSCluster, query: Application.get_env(:consigliere, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: Consigliere.PubSub},
-      {Registry, keys: :duplicate, name: Consigliere.Subscriptions},
-
-      # Blockchain: network config → RPC → ZMQ (:rest_for_one)
-      Consigliere.Blockchain.Supervisor,
-
-      # Indexer: filter, processor, UTXO manager, block processor (:one_for_one)
-      Consigliere.Indexer.Supervisor,
-
-      # Workers: monitors, verifiers, syncers (:one_for_one)
-      Consigliere.Workers.Supervisor,
-
-      # Infra: Finch HTTP pool, JungleBus client (:one_for_one)
-      Consigliere.Infra.Supervisor,
-
-      # Phoenix endpoint — must be last
-      ConsigliereWeb.Endpoint
-    ]
+    children =
+      [
+        ConsigliereWeb.Telemetry,
+        Consigliere.Repo,
+        {DNSCluster, query: Application.get_env(:consigliere, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: Consigliere.PubSub},
+        {Registry, keys: :duplicate, name: Consigliere.Subscriptions}
+      ] ++
+        runtime_children() ++
+        [
+          # Phoenix endpoint — must be last
+          ConsigliereWeb.Endpoint
+        ]
 
     opts = [strategy: :one_for_one, name: Consigliere.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  # In test mode, skip blockchain/indexer/worker/infra supervisors
+  # to avoid ZMQ/RPC connections and DB access before sandbox is ready.
+  defp runtime_children do
+    if Application.get_env(:consigliere, :skip_runtime_children, false) do
+      []
+    else
+      [
+        # Blockchain: network config → RPC → ZMQ (:rest_for_one)
+        Consigliere.Blockchain.Supervisor,
+
+        # Indexer: filter, processor, UTXO manager, block processor (:one_for_one)
+        Consigliere.Indexer.Supervisor,
+
+        # Workers: monitors, verifiers, syncers (:one_for_one)
+        Consigliere.Workers.Supervisor,
+
+        # Infra: Finch HTTP pool, JungleBus client (:one_for_one)
+        Consigliere.Infra.Supervisor
+      ]
+    end
   end
 
   @impl true

@@ -50,8 +50,8 @@ defmodule Consigliere.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
 
-      # BSV SDK — local path dependency for tx parsing, STAS classification, B2G
-      {:bsv_sdk, path: "../bsv_sdk_elixir"},
+      # BSV SDK — tx parsing, STAS classification, B2G verification
+      {:bsv_sdk, "~> 1.2"},
 
       # ZMQ — pure Erlang implementation for subscribing to BSV node events
       {:chumak, "~> 1.4"},

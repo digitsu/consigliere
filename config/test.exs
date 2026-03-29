@@ -9,7 +9,7 @@ config :consigliere, Consigliere.Repo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
-  port: 5433,
+  port: String.to_integer(System.get_env("PGPORT", "5432")),
   database: "consigliere_test#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
@@ -25,6 +25,9 @@ config :consigliere, ConsigliereWeb.Endpoint,
 config :logger, level: :warning
 
 # Initialize plugs at runtime for faster test compilation
+# Skip blockchain/indexer/worker supervisors in test
+config :consigliere, skip_runtime_children: true
+
 config :phoenix, :plug_init_mode, :runtime
 
 # Sort query params output of verified routes for robust url comparisons
