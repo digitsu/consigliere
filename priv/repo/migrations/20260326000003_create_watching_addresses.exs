@@ -1,4 +1,4 @@
-defmodule Consigliere.Repo.Migrations.CreateWatchingAddresses do
+defmodule Athanor.Repo.Migrations.CreateWatchingAddresses do
   @moduledoc """
   Creates the watching_addresses table for admin-managed address watch list.
   """

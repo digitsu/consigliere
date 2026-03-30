@@ -1,4 +1,4 @@
-defmodule Consigliere.Repo.Migrations.CreateBroadcasts do
+defmodule Athanor.Repo.Migrations.CreateBroadcasts do
   @moduledoc """
   Creates the broadcasts table for recording tx broadcast attempts.
   """

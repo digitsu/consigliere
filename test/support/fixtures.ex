@@ -1,4 +1,4 @@
-defmodule Consigliere.Fixtures do
+defmodule Athanor.Fixtures do
   @moduledoc """
   Factory functions for creating test data across all schemas.
 
@@ -6,8 +6,8 @@ defmodule Consigliere.Fixtures do
   to insert records directly into the database.
   """
 
-  alias Consigliere.Repo
-  alias Consigliere.Schema.{
+  alias Athanor.Repo
+  alias Athanor.Schema.{
     WatchingAddress,
     WatchingToken,
     MetaTransaction,

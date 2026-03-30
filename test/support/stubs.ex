@@ -1,6 +1,6 @@
-defmodule Consigliere.Test.RpcClientStub do
+defmodule Athanor.Test.RpcClientStub do
   @moduledoc """
-  Lightweight stub for Consigliere.Blockchain.RpcClient in tests.
+  Lightweight stub for Athanor.Blockchain.RpcClient in tests.
 
   Returns canned responses so controller/channel tests don't need a live BSV node.
   """
@@ -8,7 +8,7 @@ defmodule Consigliere.Test.RpcClientStub do
   use GenServer
 
   def start_link(_opts \\ []) do
-    GenServer.start_link(__MODULE__, [], name: Consigliere.Blockchain.RpcClient)
+    GenServer.start_link(__MODULE__, [], name: Athanor.Blockchain.RpcClient)
   end
 
   @impl true
@@ -33,9 +33,9 @@ defmodule Consigliere.Test.RpcClientStub do
   end
 end
 
-defmodule Consigliere.Test.TransactionFilterStub do
+defmodule Athanor.Test.TransactionFilterStub do
   @moduledoc """
-  Lightweight stub for Consigliere.Indexer.TransactionFilter in tests.
+  Lightweight stub for Athanor.Indexer.TransactionFilter in tests.
 
   Accepts add_address/add_token calls without needing ETS tables or DB state.
   """
@@ -43,7 +43,7 @@ defmodule Consigliere.Test.TransactionFilterStub do
   use GenServer
 
   def start_link(_opts \\ []) do
-    GenServer.start_link(__MODULE__, [], name: Consigliere.Indexer.TransactionFilter)
+    GenServer.start_link(__MODULE__, [], name: Athanor.Indexer.TransactionFilter)
   end
 
   @impl true

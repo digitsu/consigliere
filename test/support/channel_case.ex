@@ -1,4 +1,4 @@
-defmodule ConsigliereWeb.ChannelCase do
+defmodule AthanorWeb.ChannelCase do
   @moduledoc """
   Test case template for Phoenix Channel tests.
 
@@ -10,14 +10,14 @@ defmodule ConsigliereWeb.ChannelCase do
   using do
     quote do
       import Phoenix.ChannelTest
-      import ConsigliereWeb.ChannelCase
+      import AthanorWeb.ChannelCase
 
-      @endpoint ConsigliereWeb.Endpoint
+      @endpoint AthanorWeb.Endpoint
     end
   end
 
   setup tags do
-    Consigliere.DataCase.setup_sandbox(tags)
+    Athanor.DataCase.setup_sandbox(tags)
     :ok
   end
 end

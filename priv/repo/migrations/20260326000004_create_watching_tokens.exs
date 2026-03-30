@@ -1,4 +1,4 @@
-defmodule Consigliere.Repo.Migrations.CreateWatchingTokens do
+defmodule Athanor.Repo.Migrations.CreateWatchingTokens do
   @moduledoc """
   Creates the watching_tokens table for admin-managed STAS token watch list.
   """

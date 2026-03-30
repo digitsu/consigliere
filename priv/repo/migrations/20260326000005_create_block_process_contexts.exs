@@ -1,4 +1,4 @@
-defmodule Consigliere.Repo.Migrations.CreateBlockProcessContexts do
+defmodule Athanor.Repo.Migrations.CreateBlockProcessContexts do
   @moduledoc """
   Creates the block_process_contexts table for tracking processed blocks.
   Primary key is the block hash (text), not auto-generated.

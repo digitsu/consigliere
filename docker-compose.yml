@@ -1,8 +1,8 @@
-# Consigliere — Docker Compose
+# Athanor — Docker Compose
 # Usage: docker compose up -d
 #
 # Required env vars (set in .env or export):
-#   DATABASE_URL=ecto://postgres:postgres@db/consigliere
+#   DATABASE_URL=ecto://postgres:postgres@db/athanor
 #   SECRET_KEY_BASE=<generate with: mix phx.gen.secret>
 #
 # Optional:
@@ -22,7 +22,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: consigliere
+      POSTGRES_DB: athanor
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
@@ -33,7 +33,7 @@ services:
       timeout: 5s
       retries: 5
 
-  consigliere:
+  athanor:
     build: .
     depends_on:
       db:
@@ -41,7 +41,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      DATABASE_URL: ecto://postgres:postgres@db/consigliere
+      DATABASE_URL: ecto://postgres:postgres@db/athanor
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:-changeme_generate_with_mix_phx_gen_secret_64chars_minimum_here_ok}
       PHX_HOST: ${PHX_HOST:-localhost}
       PORT: "5000"

@@ -7,19 +7,19 @@
 # General application configuration
 import Config
 
-config :consigliere,
-  ecto_repos: [Consigliere.Repo],
+config :athanor,
+  ecto_repos: [Athanor.Repo],
   generators: [timestamp_type: :utc_datetime, binary_id: true]
 
 # Configure the endpoint
-config :consigliere, ConsigliereWeb.Endpoint,
+config :athanor, AthanorWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
   render_errors: [
-    formats: [json: ConsigliereWeb.ErrorJSON],
+    formats: [json: AthanorWeb.ErrorJSON],
     layout: false
   ],
-  pubsub_server: Consigliere.PubSub,
+  pubsub_server: Athanor.PubSub,
   live_view: [signing_salt: "qIgVMG+Q"]
 
 # Configure Elixir's Logger

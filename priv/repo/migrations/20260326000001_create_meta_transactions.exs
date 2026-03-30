@@ -1,4 +1,4 @@
-defmodule Consigliere.Repo.Migrations.CreateMetaTransactions do
+defmodule Athanor.Repo.Migrations.CreateMetaTransactions do
   @moduledoc """
   Creates the meta_transactions table for storing transaction metadata.
   Includes GIN indexes on addresses/token_ids arrays for fast containment queries.

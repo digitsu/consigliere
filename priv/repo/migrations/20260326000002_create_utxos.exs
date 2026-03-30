@@ -1,4 +1,4 @@
-defmodule Consigliere.Repo.Migrations.CreateUtxos do
+defmodule Athanor.Repo.Migrations.CreateUtxos do
   @moduledoc """
   Creates the utxos table for tracking unspent/spent transaction outputs.
   Composite indexes on (address, is_spent), (token_id, is_spent), and unique (txid, vout).

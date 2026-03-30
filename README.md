@@ -1,4 +1,4 @@
-# Consigliere
+# Athanor
 
 To start your Phoenix server:
 

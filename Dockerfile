@@ -1,5 +1,5 @@
-# Consigliere — Multi-stage Elixir release build
-# Usage: docker build -t consigliere .
+# Athanor — Multi-stage Elixir release build
+# Usage: docker build -t athanor .
 
 ARG ELIXIR_VERSION=1.16.3
 ARG OTP_VERSION=26.2.5
@@ -67,10 +67,10 @@ ENV MIX_ENV="prod"
 ENV PHX_SERVER="true"
 
 # Copy the release from builder
-COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/consigliere ./
+COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/athanor ./
 
 USER nobody
 
 EXPOSE 5000
 
-CMD ["/app/bin/consigliere", "start"]
+CMD ["/app/bin/athanor", "start"]

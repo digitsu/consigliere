@@ -1,8 +1,8 @@
-# Consigliere — Elixir Port PRD
+# Athanor — Elixir Port PRD
 
 **Project:** BSV STAS Indexer with Back-to-Genesis Resolution
 **Language:** Elixir (Phoenix)
-**Source Template:** [dxsapp/dxs-consigliere](https://github.com/dxsapp/dxs-consigliere) (C# / .NET / RavenDB / SignalR)
+**Source Template:** [dxsapp/dxs-athanor](https://github.com/dxsapp/dxs-athanor) (C# / .NET / RavenDB / SignalR)
 **Date:** 2026-03-25
 **Author:** HAL9000
 
@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-Consigliere is a selective UTXO indexer for BSV that tracks only explicitly configured addresses and STAS tokens. It resolves Back-to-Genesis provenance for STAS tokens, provides real-time WebSocket notifications for balance changes and transaction events, and exposes REST + WebSocket APIs for payment processors.
+Athanor is a selective UTXO indexer for BSV that tracks only explicitly configured addresses and STAS tokens. It resolves Back-to-Genesis provenance for STAS tokens, provides real-time WebSocket notifications for balance changes and transaction events, and exposes REST + WebSocket APIs for payment processors.
 
 This PRD defines the Elixir port — a feature-equivalent reimplementation using Phoenix, PostgreSQL, and OTP supervision, leveraging `bsv_sdk_elixir` for all cryptographic and STAS/B2G primitives.
 
@@ -169,9 +169,9 @@ address_histories
 ## 4. Module Structure
 
 ```
-consigliere/
+athanor/
 ├── lib/
-│   ├── consigliere/
+│   ├── athanor/
 │   │   ├── application.ex              — OTP app + supervision tree
 │   │   ├── repo.ex                     — Ecto Repo
 │   │   │
@@ -217,7 +217,7 @@ consigliere/
 │   │       ├── broadcast.ex
 │   │       └── address_history.ex
 │   │
-│   ├── consigliere_web/
+│   ├── athanor_web/
 │   │   ├── endpoint.ex
 │   │   ├── router.ex
 │   │   │
@@ -243,11 +243,11 @@ consigliere/
 │   └── repo/migrations/
 │
 ├── test/
-│   ├── consigliere/
+│   ├── athanor/
 │   │   ├── indexer/
 │   │   ├── services/
 │   │   └── workers/
-│   ├── consigliere_web/
+│   ├── athanor_web/
 │   │   ├── channels/
 │   │   └── controllers/
 │   └── support/
@@ -264,32 +264,32 @@ consigliere/
 ## 5. Supervision Tree
 
 ```
-Consigliere.Application
-├── Consigliere.Repo                           — Ecto/Postgres
-├── ConsigliereWeb.Endpoint                    — Phoenix HTTP + WS
-├── Phoenix.PubSub (name: Consigliere.PubSub)  — Event bus
-├── Registry (name: Consigliere.Subscriptions)  — Per-connection subscription tracking
+Athanor.Application
+├── Athanor.Repo                           — Ecto/Postgres
+├── AthanorWeb.Endpoint                    — Phoenix HTTP + WS
+├── Phoenix.PubSub (name: Athanor.PubSub)  — Event bus
+├── Registry (name: Athanor.Subscriptions)  — Per-connection subscription tracking
 │
-├── Consigliere.Blockchain.Supervisor          — :rest_for_one
-│   ├── Consigliere.Blockchain.Network         — Network config (mainnet/testnet)
-│   ├── Consigliere.Blockchain.RpcClient       — JSON-RPC connection pool
-│   └── Consigliere.Blockchain.ZmqListener     — ZMQ subscriber (raw_tx, block_hash)
+├── Athanor.Blockchain.Supervisor          — :rest_for_one
+│   ├── Athanor.Blockchain.Network         — Network config (mainnet/testnet)
+│   ├── Athanor.Blockchain.RpcClient       — JSON-RPC connection pool
+│   └── Athanor.Blockchain.ZmqListener     — ZMQ subscriber (raw_tx, block_hash)
 │
-├── Consigliere.Indexer.Supervisor             — :one_for_one
-│   ├── Consigliere.Indexer.TransactionFilter  — ETS: watched addresses/tokens
-│   ├── Consigliere.Indexer.TransactionProcessor — Pipeline: filter → parse → store → notify
-│   ├── Consigliere.Indexer.UtxoManager        — UTXO queries
-│   └── Consigliere.Indexer.BlockProcessor     — Block-by-block processing + reorg
+├── Athanor.Indexer.Supervisor             — :one_for_one
+│   ├── Athanor.Indexer.TransactionFilter  — ETS: watched addresses/tokens
+│   ├── Athanor.Indexer.TransactionProcessor — Pipeline: filter → parse → store → notify
+│   ├── Athanor.Indexer.UtxoManager        — UTXO queries
+│   └── Athanor.Indexer.BlockProcessor     — Block-by-block processing + reorg
 │
-├── Consigliere.Workers.Supervisor             — :one_for_one
-│   ├── Consigliere.Workers.UnconfirmedMonitor — Periodic: recheck stale unconfirmed
-│   ├── Consigliere.Workers.ChainTipVerifier   — Periodic: verify chain tip consistency
-│   ├── Consigliere.Workers.StasObserver       — Watch STAS attribute changes
-│   └── Consigliere.Workers.MissingTxSyncer    — Backfill via JungleBus
+├── Athanor.Workers.Supervisor             — :one_for_one
+│   ├── Athanor.Workers.UnconfirmedMonitor — Periodic: recheck stale unconfirmed
+│   ├── Athanor.Workers.ChainTipVerifier   — Periodic: verify chain tip consistency
+│   ├── Athanor.Workers.StasObserver       — Watch STAS attribute changes
+│   └── Athanor.Workers.MissingTxSyncer    — Backfill via JungleBus
 │
-└── Consigliere.Infra.Supervisor               — :one_for_one
-    ├── Finch (name: Consigliere.Finch)        — HTTP connection pool
-    └── Consigliere.Blockchain.JungleBusClient — JungleBus WS (optional)
+└── Athanor.Infra.Supervisor               — :one_for_one
+    ├── Finch (name: Athanor.Finch)        — HTTP connection pool
+    └── Athanor.Blockchain.JungleBusClient — JungleBus WS (optional)
 ```
 
 ---
@@ -320,7 +320,7 @@ Consigliere.Application
 
 ### 6.2 WebSocket API (Phoenix Channel)
 
-**Socket path:** `/ws/consigliere`
+**Socket path:** `/ws/athanor`
 **Channel topic:** `"wallet:lobby"` (or `"wallet:{address}"` for per-address topics)
 
 #### Client → Server (push)
@@ -436,7 +436,7 @@ This eliminates the need to port `Dxs.Bsv` and `Dxs.Bsv.Tokens` — the most com
 ## 10. Configuration (runtime.exs)
 
 ```elixir
-config :consigliere,
+config :athanor,
   network: System.get_env("NETWORK", "testnet"),
   bsv_node: [
     rpc_url: System.get_env("BSV_NODE_RPC_URL", "http://localhost:18332"),
@@ -454,8 +454,8 @@ config :consigliere,
     url: System.get_env("JUNGLE_BUS_URL")
   ]
 
-config :consigliere, Consigliere.Repo,
-  url: System.get_env("DATABASE_URL", "postgres://localhost/consigliere_dev")
+config :athanor, Athanor.Repo,
+  url: System.get_env("DATABASE_URL", "postgres://localhost/athanor_dev")
 ```
 
 ---
@@ -463,7 +463,7 @@ config :consigliere, Consigliere.Repo,
 ## 11. Deployment
 
 - **Docker:** Multi-stage build (Elixir release)
-- **Compose:** `consigliere` + `postgres` services, optional BSV node sidecar
+- **Compose:** `athanor` + `postgres` services, optional BSV node sidecar
 - **Port:** 5000 (matching original for drop-in compatibility)
 - **Health:** `GET /api/admin/blockchain/sync-status`
 - **Env-compatible:** Same env var names as the Docker Hub image where possible

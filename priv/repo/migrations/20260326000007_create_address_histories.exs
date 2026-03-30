@@ -1,4 +1,4 @@
-defmodule Consigliere.Repo.Migrations.CreateAddressHistories do
+defmodule Athanor.Repo.Migrations.CreateAddressHistories do
   @moduledoc """
   Creates the address_histories table for per-address transaction history.
   Composite index on (address, timestamp DESC) for paginated queries.
