@@ -55,7 +55,7 @@ defmodule Athanor.Indexer.B2gResolver do
           script_binary = BSV.Script.to_binary(output.locking_script)
           script_type = Classifier.classify(script_binary)
 
-          if script_type in [:stas, :stas_btg, :dstas] do
+          if script_type in [:stas, :stas_btg, :stas3] do
             # Walk back through the corresponding input
             # STAS tokens typically spend input at same index or index 0
             input_idx = min(vout, length(tx.inputs) - 1)

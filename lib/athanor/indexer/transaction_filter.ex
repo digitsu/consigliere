@@ -205,9 +205,9 @@ defmodule Athanor.Indexer.TransactionFilter do
         token_id_str = BSV.Tokens.TokenId.to_string(parsed.stas.token_id)
         if :ets.member(@tokens_table, token_id_str), do: [token_id_str | acc], else: acc
 
-      :dstas ->
-        # dSTAS fields lack a token_id; use the owner hash hex as identifier
-        owner_hex = Base.encode16(parsed.dstas.owner, case: :lower)
+      :stas3 ->
+        # STAS3 fields lack a token_id; use the owner hash hex as identifier
+        owner_hex = Base.encode16(parsed.stas3.owner, case: :lower)
         if :ets.member(@tokens_table, owner_hex), do: [owner_hex | acc], else: acc
 
       _ ->

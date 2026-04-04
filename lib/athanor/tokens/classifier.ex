@@ -1,7 +1,7 @@
 defmodule Athanor.Tokens.Classifier do
   @moduledoc """
-  Classifies transaction outputs as P2PKH, STAS, DSTAS, or unknown.
-  Delegates to BSV.Tokens.Script.Reader for STAS v2 script pattern matching.
+  Classifies transaction outputs as P2PKH, STAS, STAS3, or unknown.
+  Delegates to BSV.Tokens.Script.Reader for STAS script pattern matching.
   """
 
   alias BSV.Tokens.Script.Reader
@@ -13,7 +13,7 @@ defmodule Athanor.Tokens.Classifier do
     - `script_binary` — raw locking script bytes
 
   ## Returns
-    `:p2pkh` | `:stas` | `:stas_btg` | `:dstas` | `:op_return` | `:unknown`
+    `:p2pkh` | `:stas` | `:stas_btg` | `:stas3` | `:op_return` | `:unknown`
   """
   @spec classify(binary()) :: atom()
   def classify(script_binary) when is_binary(script_binary) do
@@ -51,8 +51,8 @@ defmodule Athanor.Tokens.Classifier do
           type when type in [:stas, :stas_btg] ->
             BSV.Tokens.TokenId.to_string(parsed.stas.token_id)
 
-          :dstas ->
-            Base.encode16(parsed.dstas.owner, case: :lower)
+          :stas3 ->
+            Base.encode16(parsed.stas3.owner, case: :lower)
 
           _ ->
             nil

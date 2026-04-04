@@ -115,7 +115,7 @@ defmodule Athanor.Indexer.TransactionProcessor do
         case script_type do
           :stas -> "stas"
           :stas_btg -> "stas"
-          :dstas -> "dstas"
+          :stas3 -> "stas3"
           _ -> nil
         end
 

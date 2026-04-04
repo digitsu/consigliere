@@ -4,7 +4,7 @@ defmodule Athanor.Schema.Utxo do
 
   Each UTXO is uniquely identified by `(txid, vout)`. When a UTXO is consumed,
   `is_spent` is set to true and `spent_txid` records the consuming transaction.
-  Token outputs carry `token_id` and `token_type` ("stas" or "dstas").
+  Token outputs carry `token_id` and `token_type` ("stas" or "stas3").
   """
 
   use Ecto.Schema
@@ -47,7 +47,7 @@ defmodule Athanor.Schema.Utxo do
     |> validate_required(@required_fields)
     |> validate_number(:vout, greater_than_or_equal_to: 0)
     |> validate_number(:satoshis, greater_than_or_equal_to: 0)
-    |> validate_inclusion(:token_type, ~w(stas dstas), message: "must be stas or dstas")
+    |> validate_inclusion(:token_type, ~w(stas stas3), message: "must be stas or stas3")
     |> unique_constraint([:txid, :vout], name: :utxos_txid_vout_index)
   end
 end
