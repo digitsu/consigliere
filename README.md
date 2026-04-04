@@ -11,7 +11,7 @@ Athanor watches configured addresses and token IDs, indexes transactions in real
 - **STAS Back-to-Genesis Resolution** — Fully resolves token provenance by tracing each STAS UTXO back to its original genesis transaction, ensuring accurate ownership and lineage verification
 - **Selective UTXO Indexing** — Indexes only explicitly configured addresses and token IDs, avoiding full-chain tracking to reduce infrastructure load, storage, and costs
 - **Dynamic Address Onboarding** — Add new addresses and token IDs at runtime via the Admin API without reindexing or downtime
-- **Multiple Transaction Types** — Natively indexes STAS tokens (STAS, STAS-BTG, dSTAS) and standard P2PKH transactions
+- **Multiple Transaction Types** — Natively indexes STAS tokens (STAS, STAS-BTG, STAS 3) and standard P2PKH transactions
 - **Real-Time Event Streaming** — Push-based WebSocket notifications via Phoenix Channels for transaction detection, balance changes, and UTXO state updates
 - **Fault Tolerant** — Built on the BEAM VM with OTP supervision trees. If a ZMQ listener or RPC connection crashes, only that process restarts
 - **Concurrent** — Lightweight Erlang processes handle thousands of concurrent WebSocket connections and parallel transaction processing

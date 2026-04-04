@@ -56,7 +56,7 @@ BSV Node (ZMQ)          JungleBus (WS)
 ┌──────────────────────────────────────┐
 │       Transaction Processor          │
 │  - Parse tx (bsv_sdk_elixir)        │
-│  - Classify: P2PKH / STAS / DSTAS   │
+│  - Classify: P2PKH / STAS / STAS3   │
 │  - B2G resolution for STAS          │
 │  - Update UTXO set in Postgres      │
 │  - Publish events via PubSub        │
@@ -104,7 +104,7 @@ utxos
 ├── satoshis (bigint)
 ├── script_hex (text)
 ├── token_id (text, nullable, index) — STAS token ID if token output
-├── token_type (text, nullable) — "stas" | "dstas" | null
+├── token_type (text, nullable) — "stas" | "stas3" | null
 ├── is_spent (boolean, default false, index)
 ├── spent_txid (binary(32), nullable)
 ├── block_height (integer, nullable)
@@ -189,7 +189,7 @@ athanor/
 │   │   │   └── b2g_resolver.ex         — Back-to-Genesis chain walking
 │   │   │
 │   │   ├── tokens/                     — STAS token logic (delegates to bsv_sdk_elixir)
-│   │   │   ├── classifier.ex           — Classify tx as STAS/DSTAS/P2PKH
+│   │   │   ├── classifier.ex           — Classify tx as STAS/STAS3/P2PKH
 │   │   │   └── provenance.ex           — Token lineage verification
 │   │   │
 │   │   ├── services/                   — Business logic
@@ -384,7 +384,7 @@ Athanor.Application
 - **Tests:** Full indexing pipeline with fixture txs, reorg scenarios
 
 ### Phase 4: STAS + Back-to-Genesis
-- STAS/DSTAS tx classification (via bsv_sdk_elixir tokens module)
+- STAS/STAS3 tx classification (via bsv_sdk_elixir tokens module)
 - B2G resolver — walk input chain back to genesis issuance
 - Token provenance storage + queries
 - Token stats (supply, burn totals)
@@ -422,7 +422,7 @@ The Elixir SDK already provides the heavy lifting:
 |---|---|
 | `BsvSdk.Transaction` | Parse raw tx hex, extract inputs/outputs |
 | `BsvSdk.Script` | Script analysis, P2PKH extraction |
-| `BsvSdk.Tokens.ScriptReader` | Classify STAS v2 / DSTAS scripts |
+| `BsvSdk.Tokens.ScriptReader` | Classify STAS v2 / STAS3 scripts |
 | `BsvSdk.Tokens.Types` | TokenId, ScriptType, Scheme enums |
 | `BsvSdk.Spv.MerklePath` | Merkle proof verification |
 | `BsvSdk.Primitives.Address` | Address parsing + validation |

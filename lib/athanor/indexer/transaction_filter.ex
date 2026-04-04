@@ -161,7 +161,7 @@ defmodule Athanor.Indexer.TransactionFilter do
   ## ── Private Helpers ──
 
   # Iterates over all transaction outputs and collects watched addresses
-  # and STAS/dSTAS token IDs that appear in the locking scripts.
+  # and STAS/STAS3 token IDs that appear in the locking scripts.
   #
   # Returns {[matched_address_strings], [matched_token_id_strings]}.
   @spec scan_outputs([BSV.Transaction.Output.t()]) :: {[String.t()], [String.t()]}
@@ -173,7 +173,7 @@ defmodule Athanor.Indexer.TransactionFilter do
       # Check for watched address (P2PKH)
       addrs_acc = check_address(script, addrs_acc)
 
-      # Check for watched STAS / dSTAS token
+      # Check for watched STAS / STAS3 token
       tokens_acc = check_token(script_binary, tokens_acc)
 
       {addrs_acc, tokens_acc}
@@ -194,7 +194,7 @@ defmodule Athanor.Indexer.TransactionFilter do
     end
   end
 
-  # Parses a locking script binary for STAS or dSTAS token data and appends
+  # Parses a locking script binary for STAS or STAS 3 token data and appends
   # the token ID string to the accumulator if it is in :watched_tokens.
   @spec check_token(binary(), [String.t()]) :: [String.t()]
   defp check_token(script_binary, acc) do

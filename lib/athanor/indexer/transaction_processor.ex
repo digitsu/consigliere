@@ -1,7 +1,7 @@
 defmodule Athanor.Indexer.TransactionProcessor do
   @moduledoc """
   Core indexing pipeline: receives filtered transactions, parses outputs,
-  classifies them (P2PKH/STAS/DSTAS), updates the UTXO set in Postgres,
+  classifies them (P2PKH/STAS/STAS3), updates the UTXO set in Postgres,
   records address history, and publishes events via PubSub.
 
   Pipeline: filter → parse → classify → store → notify
