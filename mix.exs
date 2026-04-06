@@ -51,7 +51,7 @@ defmodule Athanor.MixProject do
       {:bandit, "~> 1.5"},
 
       # BSV SDK — tx parsing, STAS classification, B2G verification
-      {:bsv_sdk, "~> 1.3"},
+      {:bsv_sdk, "~> 1.4"},
 
       # ZMQ — pure Erlang implementation for subscribing to BSV node events
       {:chumak, "~> 1.4"},
