@@ -50,8 +50,11 @@ defmodule Athanor.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
 
-      # BSV SDK — tx parsing, STAS classification, B2G verification
-      {:bsv_sdk, "~> 1.4"},
+      # BSV SDK — tx parsing, STAS classification, B2G verification.
+      # Pinned to local path while STAS 3.0 spec v0.1 fixes (Stas3Fields.redemption
+      # protoID exposure, service fields, SpendType) land. Switch back to a hex
+      # `~>` constraint once a bsv_sdk release > 1.4.0 ships those changes.
+      {:bsv_sdk, path: "../bsv_sdk_elixir"},
 
       # ZMQ — pure Erlang implementation for subscribing to BSV node events
       {:chumak, "~> 1.4"},

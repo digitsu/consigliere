@@ -61,6 +61,25 @@ defmodule Athanor.Indexer.UtxoManager do
   end
 
   @doc """
+  Records the STAS 3.0 operation class (`stas3_op`) for a previously
+  indexed UTXO. The class is the spendType byte from the unlocking
+  script of the input that consumed this UTXO (spec v0.1 §8.2 / §9.6).
+  Silently ignored if the UTXO is unknown — non-watched STAS 3.0 inputs
+  may legitimately reference outputs we never indexed.
+  """
+  def set_stas3_op(txid, vout, op) do
+    case Repo.get_by(Utxo, txid: txid, vout: vout) do
+      nil ->
+        {:error, :not_found}
+
+      utxo ->
+        utxo
+        |> Utxo.changeset(%{stas3_op: op})
+        |> Repo.update()
+    end
+  end
+
+  @doc """
   Unconfirm UTXOs at or above a given block height (for reorg rollback).
   """
   def unconfirm_above(height) do

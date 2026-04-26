@@ -7,7 +7,9 @@ defmodule AthanorWeb.AdminControllerTest do
   describe "POST /api/admin/manage/address" do
     test "creates a watched address", %{conn: conn} do
       conn = post(conn, "/api/admin/manage/address", %{address: "1TestAddr", name: "My Wallet"})
-      assert %{"id" => _, "address" => "1TestAddr", "name" => "My Wallet"} = json_response(conn, 201)
+
+      assert %{"id" => _, "address" => "1TestAddr", "name" => "My Wallet"} =
+               json_response(conn, 201)
     end
 
     test "returns 422 without address", %{conn: conn} do
@@ -64,6 +66,24 @@ defmodule AthanorWeb.AdminControllerTest do
       conn = get(conn, "/api/admin/manage/stas-tokens")
       assert %{"tokens" => tokens} = json_response(conn, 200)
       assert length(tokens) == 2
+    end
+
+    test "exposes freeze_auth and confiscate_auth as hex strings", %{conn: conn} do
+      freeze_pkh = :binary.copy(<<0x11>>, 20)
+      conf_pkh = :binary.copy(<<0x22>>, 20)
+
+      Repo.insert!(%WatchingToken{
+        token_id: "proto_xy",
+        freeze_auth: freeze_pkh,
+        confiscate_auth: conf_pkh
+      })
+
+      conn = get(conn, "/api/admin/manage/stas-tokens")
+      assert %{"tokens" => [t]} = json_response(conn, 200)
+
+      assert t["token_id"] == "proto_xy"
+      assert t["freeze_auth"] == Base.encode16(freeze_pkh, case: :lower)
+      assert t["confiscate_auth"] == Base.encode16(conf_pkh, case: :lower)
     end
   end
 

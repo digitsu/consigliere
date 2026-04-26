@@ -37,6 +37,11 @@ defmodule Athanor.Tokens.Classifier do
 
   ## Returns
     List of `{vout, script_type, token_id | nil}` tuples.
+
+  For STAS 3.0 outputs, `token_id` is the hex-encoded `protoID` (the 20-byte
+  HASH160 of the issuer/redemption address, per STAS 3.0 spec v0.1 §5.2.1
+  and §14). protoID is the canonical, immutable token-id for an issuance —
+  the owner PKH changes per UTXO and must NOT be used as the token-id.
   """
   @spec classify_outputs(BSV.Transaction.t()) :: [{non_neg_integer(), atom(), String.t() | nil}]
   def classify_outputs(%BSV.Transaction{outputs: outputs}) do
@@ -52,7 +57,10 @@ defmodule Athanor.Tokens.Classifier do
             BSV.Tokens.TokenId.to_string(parsed.stas.token_id)
 
           :stas3 ->
-            Base.encode16(parsed.stas3.owner, case: :lower)
+            # STAS 3.0 protoID = HASH160 of the redemption/issuer address,
+            # extracted from the post-OP_RETURN data attachment by the script
+            # reader and exposed as `stas3.redemption`.
+            Base.encode16(parsed.stas3.redemption, case: :lower)
 
           _ ->
             nil

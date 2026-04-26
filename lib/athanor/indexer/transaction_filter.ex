@@ -206,9 +206,11 @@ defmodule Athanor.Indexer.TransactionFilter do
         if :ets.member(@tokens_table, token_id_str), do: [token_id_str | acc], else: acc
 
       :stas3 ->
-        # STAS3 fields lack a token_id; use the owner hash hex as identifier
-        owner_hex = Base.encode16(parsed.stas3.owner, case: :lower)
-        if :ets.member(@tokens_table, owner_hex), do: [owner_hex | acc], else: acc
+        # STAS 3.0 token-id = protoID = HASH160 of the issuer/redemption address
+        # (spec v0.1 §5.2.1, §14). This is the canonical, immutable identifier
+        # for the issuance — owner PKH rotates per UTXO and must NOT be used.
+        proto_hex = Base.encode16(parsed.stas3.redemption, case: :lower)
+        if :ets.member(@tokens_table, proto_hex), do: [proto_hex | acc], else: acc
 
       _ ->
         acc

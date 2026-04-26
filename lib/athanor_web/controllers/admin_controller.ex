@@ -87,12 +87,7 @@ defmodule AthanorWeb.AdminController do
 
         conn
         |> put_status(:created)
-        |> json(%{
-          id: token.id,
-          token_id: token.token_id,
-          symbol: token.symbol,
-          inserted_at: token.inserted_at
-        })
+        |> json(token_view(token))
 
       {:error, changeset} ->
         conn
@@ -109,14 +104,26 @@ defmodule AthanorWeb.AdminController do
   """
   def list_stas_tokens(conn, _params) do
     tokens = Repo.all(WatchingToken)
-
-    json(conn, %{
-      tokens:
-        Enum.map(tokens, fn t ->
-          %{id: t.id, token_id: t.token_id, symbol: t.symbol, inserted_at: t.inserted_at}
-        end)
-    })
+    json(conn, %{tokens: Enum.map(tokens, &token_view/1)})
   end
+
+  # Render a `WatchingToken` for the admin API. STAS 3.0 service-field
+  # authorities (spec v0.1 §5.2.3) are exposed as lowercase hex strings so
+  # callers can compare against canonical addresses without dealing with
+  # raw 20-byte binaries over JSON.
+  defp token_view(%WatchingToken{} = t) do
+    %{
+      id: t.id,
+      token_id: t.token_id,
+      symbol: t.symbol,
+      freeze_auth: hex_or_nil(t.freeze_auth),
+      confiscate_auth: hex_or_nil(t.confiscate_auth),
+      inserted_at: t.inserted_at
+    }
+  end
+
+  defp hex_or_nil(nil), do: nil
+  defp hex_or_nil(bin) when is_binary(bin), do: Base.encode16(bin, case: :lower)
 
   @doc """
   GET /api/admin/blockchain/sync-status — Returns chain sync status.
