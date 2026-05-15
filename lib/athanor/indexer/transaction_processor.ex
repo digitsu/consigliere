@@ -350,44 +350,45 @@ defmodule Athanor.Indexer.TransactionProcessor do
   #     only honoured when it agrees with the parent's tag
   defp compute_stas_attributes(tx, classified) do
     parent_outputs = lookup_parent_outputs(tx)
-
-    # A STAS-typed parent UTXO whose own `token_id` is still nil is
-    # itself deferred — we don't know its lineage yet, so we can't
-    # inherit from it. Treat such parents like unindexed parents.
-    resolved_parent? = fn
-      nil -> false
-      %Utxo{token_id: nil, token_type: t} when t in ["stas", "stas3"] -> false
-      _ -> true
-    end
-
-    stas_inputs =
-      Enum.filter(parent_outputs, fn {_idx, p} ->
-        p && p.token_type in ["stas", "stas3"] && p.token_id != nil
-      end)
+    parent_metas = lookup_parent_metas(tx)
 
     stas_outputs = Enum.filter(classified, fn {_v, t, _} -> t in [:stas, :stas3, :stas_btg] end)
     has_stas_outputs = stas_outputs != []
 
-    # Missing parents = inputs whose parent we either haven't indexed
-    # or have indexed in a still-deferred state. For a tx with STAS
-    # outputs, the presence of ANY missing parent makes lineage
-    # undecidable until the reprocessor cycles back.
-    missing_parents =
+    # Classify every non-coinbase input's parent. The class tells us
+    # whether lineage is decidable now (settled clean / settled tainted /
+    # plain non-STAS) or must wait (parent unindexed / parent itself not
+    # yet settled).
+    input_classes =
       if Transaction.is_coinbase?(tx) do
         []
       else
-        tx.inputs
-        |> Enum.filter(fn input ->
-          parent = Map.get(parent_outputs, {input.source_txid, input.source_tx_out_index})
-          not resolved_parent?.(parent)
+        Enum.map(tx.inputs, fn input ->
+          utxo = Map.get(parent_outputs, {input.source_txid, input.source_tx_out_index})
+          meta = Map.get(parent_metas, input.source_txid)
+          {input, utxo, meta, classify_parent(utxo, meta)}
         end)
-        |> Enum.map(fn input -> display_hex(input.source_txid) end)
-        |> Enum.uniq()
       end
 
-    deferred? = has_stas_outputs and missing_parents != []
-    is_stas = stas_inputs != [] or has_stas_outputs
+    # Missing parents = inputs whose lineage isn't settled. A forged or
+    # tainted parent is SETTLED (`:stas_tainted`) — it does NOT defer the
+    # child; only genuinely-unknown parents (`:missing` / `:deferred`) do.
+    missing_parents =
+      input_classes
+      |> Enum.filter(fn {_i, _u, _m, class} -> class in [:missing, :deferred] end)
+      |> Enum.map(fn {input, _u, _m, _c} -> display_hex(input.source_txid) end)
+      |> Enum.uniq()
 
+    deferred? = has_stas_outputs and missing_parents != []
+
+    # Settled STAS parents (clean or tainted). Their presence makes this
+    # tx a transfer; their absence (with STAS outputs) makes it an issuance.
+    stas_parents =
+      input_classes
+      |> Enum.filter(fn {_i, _u, _m, c} -> c in [:stas_clean, :stas_tainted] end)
+      |> Enum.map(fn {_i, utxo, meta, class} -> {utxo, meta, class} end)
+
+    is_stas = stas_parents != [] or has_stas_outputs
     all_stas_inputs_known = not deferred?
 
     {is_issue, is_valid_issue, illegal_roots, token_id_per_vout} =
@@ -397,12 +398,12 @@ defmodule Athanor.Indexer.TransactionProcessor do
           # Outputs index for satoshi accounting but token_id stays nil.
           {false, false, [], untagged_outputs(stas_outputs)}
 
-        is_stas and stas_inputs == [] and has_stas_outputs ->
-          {valid, roots, vout_map} = decide_issuance(tx, parent_outputs, stas_outputs, true)
+        is_stas and stas_parents == [] and has_stas_outputs ->
+          {valid, roots, vout_map} = decide_issuance(tx, parent_outputs, stas_outputs)
           {true, valid, roots, vout_map}
 
         is_stas ->
-          {valid, roots, vout_map} = decide_transfer(stas_inputs, stas_outputs, parent_outputs)
+          {valid, roots, vout_map} = decide_transfer(stas_parents, stas_outputs)
           {false, valid, roots, vout_map}
 
         true ->
@@ -421,6 +422,32 @@ defmodule Athanor.Indexer.TransactionProcessor do
       token_id_per_vout: token_id_per_vout,
       parent_outputs: parent_outputs
     }
+  end
+
+  # Classify a single input's parent for lineage purposes:
+  #
+  #   * `:missing`      — parent UTXO not indexed; lineage undecidable.
+  #   * `:non_stas`     — plain (P2PKH etc.) parent; no lineage concern.
+  #   * `:deferred`     — STAS parent whose own lineage isn't settled yet
+  #                       (parent tx still has unknown ancestors).
+  #   * `:stas_clean`   — STAS parent, settled, valid lineage.
+  #   * `:stas_tainted` — STAS parent, settled, but poisoned by a forged
+  #                       issuance somewhere upstream (`illegal_roots`
+  #                       non-empty). Distinct from `:deferred`: the
+  #                       parent IS known, it's just permanently invalid.
+  defp classify_parent(nil, _meta), do: :missing
+
+  defp classify_parent(%Utxo{token_type: t}, _meta) when t not in ["stas", "stas3"],
+    do: :non_stas
+
+  defp classify_parent(%Utxo{}, nil), do: :deferred
+
+  defp classify_parent(%Utxo{}, %MetaTransaction{metadata: md}) do
+    cond do
+      Map.get(md, "all_stas_inputs_known", true) == false -> :deferred
+      (Map.get(md, "illegal_roots") || []) != [] -> :stas_tainted
+      true -> :stas_clean
+    end
   end
 
   defp untagged_outputs(stas_outputs) do
@@ -457,10 +484,24 @@ defmodule Athanor.Indexer.TransactionProcessor do
     end
   end
 
+  # Build a map of `source_txid => parent_MetaTransaction_or_nil` for every
+  # non-coinbase input. The parent's lineage flags (`all_stas_inputs_known`,
+  # `illegal_roots`) drive the clean/tainted/deferred classification.
+  defp lookup_parent_metas(tx) do
+    if Transaction.is_coinbase?(tx) do
+      %{}
+    else
+      Enum.reduce(tx.inputs, %{}, fn input, acc ->
+        meta = Repo.get_by(MetaTransaction, txid: input.source_txid)
+        Map.put(acc, input.source_txid, meta)
+      end)
+    end
+  end
+
   # Issuance branch: protoID across STAS outputs must be unique AND equal
   # `HASH160(Vin[0]'s spent output)`. `parent_outputs[{Vin[0].txid, vout}]`
   # gives us that address; we decode the base58 to recover the PKH.
-  defp decide_issuance(tx, parent_outputs, stas_outputs, all_known) do
+  defp decide_issuance(tx, parent_outputs, stas_outputs) do
     output_protos =
       stas_outputs
       |> Enum.map(fn {_v, _t, tid} -> tid end)
@@ -478,7 +519,7 @@ defmodule Athanor.Indexer.TransactionProcessor do
       end
 
     valid =
-      all_known and single_proto and
+      single_proto and
         vin0_pkh_hex != nil and hd(output_protos) == vin0_pkh_hex
 
     token_id_per_vout =
@@ -497,43 +538,45 @@ defmodule Athanor.Indexer.TransactionProcessor do
     {valid, illegal_roots, token_id_per_vout}
   end
 
-  # Transfer branch: child outputs inherit the parent's `token_id`. Vin[0]
-  # is the spent STAS UTXO; if it carries token_id P, the child outputs
-  # join the same issuance set when their script self-asserts P. A child
-  # that self-asserts a different protoID is treated as forged: untagged,
-  # tx added to `illegal_roots`.
-  defp decide_transfer(stas_inputs, stas_outputs, _parent_outputs) do
-    parent_token_id =
-      case stas_inputs do
-        [{_idx, %Utxo{token_id: tid}} | _] -> tid
-        _ -> nil
-      end
+  # Transfer branch. `stas_parents` is a list of `{utxo, meta, class}`
+  # for every settled STAS input. Two outcomes:
+  #
+  #   * Tainted — any STAS parent is `:stas_tainted`. The poison
+  #     (`illegal_roots`) is the union of every tainted parent's own
+  #     `illegal_roots` set (a forged issuance's set is `[itself]`, a
+  #     tainted transfer's set is whatever it inherited). All outputs
+  #     are left untagged — a tainted UTXO is not a valid set member.
+  #
+  #   * Clean — every STAS parent is `:stas_clean`. Outputs inherit the
+  #     parent `token_id`, but only where the child output's own
+  #     script-asserted protoID agrees with it (a spliced-in alien
+  #     protoID is rejected to nil).
+  defp decide_transfer(stas_parents, stas_outputs) do
+    illegal_roots =
+      stas_parents
+      |> Enum.flat_map(fn
+        {_utxo, %MetaTransaction{metadata: md}, :stas_tainted} ->
+          Map.get(md, "illegal_roots") || []
 
-    parent_illegal_roots =
-      stas_inputs
-      |> Enum.flat_map(fn {_idx, p} -> (p.token_id == nil && []) || [] end)
+        {_utxo, _meta, :stas_clean} ->
+          []
+      end)
       |> Enum.uniq()
 
-    {ok_outputs, bad_outputs} =
-      Enum.split_with(stas_outputs, fn {_v, _t, tid} ->
-        tid == parent_token_id and parent_token_id != nil
+    parent_token_id =
+      Enum.find_value(stas_parents, fn
+        {%Utxo{token_id: tid}, _meta, :stas_clean} -> tid
+        _ -> nil
       end)
 
     token_id_per_vout =
-      Map.merge(
-        Enum.into(ok_outputs, %{}, fn {v, _, _} -> {v, parent_token_id} end),
-        Enum.into(bad_outputs, %{}, fn {v, _, _} -> {v, nil} end)
-      )
-
-    # If the parent UTXO itself was untagged (forged ancestor / not
-    # admitted), every child output inherits that taint.
-    illegal_roots =
-      if parent_token_id == nil and stas_inputs != [] do
-        Enum.map(stas_inputs, fn {_, p} -> display_hex(p.txid) end)
+      if illegal_roots != [] or is_nil(parent_token_id) do
+        untagged_outputs(stas_outputs)
       else
-        parent_illegal_roots
+        Enum.into(stas_outputs, %{}, fn {v, _t, tid} ->
+          {v, (tid == parent_token_id && parent_token_id) || nil}
+        end)
       end
-      |> Enum.uniq()
 
     {false, illegal_roots, token_id_per_vout}
   end
