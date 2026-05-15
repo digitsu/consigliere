@@ -192,8 +192,36 @@ defmodule Athanor.Indexer.BlockProcessor do
 
   defp maybe_handle_reorg(nil, _height), do: :ok
 
-  defp rollback_to(height) do
+  @doc """
+  Rolls the index back to `height` after a chain reorg.
+
+  Every transaction in an orphaned block (`block_height > height`) is
+  demoted to the unconfirmed state rather than deleted — if the new
+  chain re-mines it, normal processing re-confirms it. Critically, any
+  UTXO that an orphaned transaction *spent* is freed (`is_spent` reset
+  to false): otherwise the UTXO set would retain a phantom spend for a
+  transaction that may never reappear on the new chain.
+
+  Transactions at or below `height` are left untouched.
+  """
+  def rollback_to(height) do
     Logger.warning("Rolling back to height #{height}")
+
+    # Capture the orphaned txids BEFORE the un-confirm below clears the
+    # block_height column this query filters on.
+    orphaned_txids =
+      MetaTransaction
+      |> where([m], m.block_height > ^height)
+      |> select([m], m.txid)
+      |> Repo.all()
+
+    # Free parent UTXOs that orphaned txs had spent — they return to the
+    # unspent set since the spending tx is no longer on the active chain.
+    if orphaned_txids != [] do
+      Utxo
+      |> where([u], u.spent_txid in ^orphaned_txids)
+      |> Repo.update_all(set: [is_spent: false, spent_txid: nil])
+    end
 
     # Delete block process contexts above this height
     BlockProcessContext
