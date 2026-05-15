@@ -13,7 +13,7 @@ defmodule Athanor.Indexer.TransactionProcessor do
   import Ecto.Query
 
   alias Athanor.Repo
-  alias Athanor.Schema.{MetaTransaction, AddressHistory, WatchingToken, Utxo}
+  alias Athanor.Schema.{MetaTransaction, AddressHistory, WatchingToken, WatchingAddress, Utxo}
   alias Athanor.Indexer.UtxoManager
   alias Athanor.Tokens.{Classifier, SpendType, Stas3Meta}
   alias BSV.Tokens.Script.Reader, as: ScriptReader
@@ -186,17 +186,36 @@ defmodule Athanor.Indexer.TransactionProcessor do
       end
     end)
 
-    # 4. Record address history for matched addresses
-    Enum.each(matched_addresses, fn address ->
-      # Determine direction: in if address appears in outputs, out if in inputs
+    # 4. Record address history. One directional row per watched address
+    # involved in the tx — received (`in`, output side) or sent (`out`,
+    # input side). The filter's `matched_addresses` only covers P2PKH
+    # outputs, so we additionally resolve:
+    #   * STAS 3.0 owner addresses on outputs (filter can't extract them)
+    #   * input-side senders from the spent UTXOs (filter never scans inputs)
+    # `matched_addresses` is kept as a trusted seed so the set is never
+    # smaller than what the filter already matched.
+    spent_utxos = stas_attrs.parent_outputs |> Map.values() |> Enum.reject(&is_nil/1)
+    watched = watched_address_set()
+
+    extra_addresses =
+      tx.outputs
+      |> Enum.map(fn o -> script_address(o.locking_script) end)
+      |> Enum.concat(Enum.map(spent_utxos, & &1.address))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.filter(&MapSet.member?(watched, &1))
+
+    history_addresses = Enum.uniq(matched_addresses ++ extra_addresses)
+
+    Enum.each(history_addresses, fn address ->
       direction = determine_direction(tx, address)
-      satoshis = calculate_address_amount(tx, address, classified)
+      {satoshis, token_id} = address_flow(tx, address, direction, spent_utxos, stas_attrs)
 
       history_attrs = %{
         address: address,
         txid: txid_hex,
         direction: direction,
         satoshis: satoshis,
+        token_id: token_id,
         block_height: block_height,
         timestamp: System.os_time(:second)
       }
@@ -399,7 +418,8 @@ defmodule Athanor.Indexer.TransactionProcessor do
         "illegal_roots" => illegal_roots,
         "missing_transactions" => missing_parents
       },
-      token_id_per_vout: token_id_per_vout
+      token_id_per_vout: token_id_per_vout,
+      parent_outputs: parent_outputs
     }
   end
 
@@ -550,11 +570,40 @@ defmodule Athanor.Indexer.TransactionProcessor do
     if address in output_addrs, do: "in", else: "out"
   end
 
-  defp calculate_address_amount(tx, address, _classified) do
-    tx.outputs
-    |> Enum.filter(fn output -> script_address(output.locking_script) == address end)
-    |> Enum.map(& &1.satoshis)
-    |> Enum.sum()
+  # The set of all watched address strings, as a MapSet for O(1) lookups.
+  # Watched addresses are few (selective indexer) so loading them per tx
+  # is cheap; doing so keeps the processor decoupled from the filter's
+  # ETS tables, which are not present in some test setups.
+  defp watched_address_set do
+    Repo.all(from(w in WatchingAddress, select: w.address)) |> MapSet.new()
+  end
+
+  # Resolve the `{satoshis, token_id}` pair for a single address-history
+  # row. For an `in` flow the amount + token come from the outputs paying
+  # the address; for an `out` flow they come from the spent UTXOs the
+  # address owned. `token_id` uses the lineage-checked tag (nil for
+  # forged / deferred outputs), never the raw script-asserted protoID.
+  defp address_flow(tx, address, "in", _spent_utxos, stas_attrs) do
+    outs =
+      tx.outputs
+      |> Enum.with_index()
+      |> Enum.filter(fn {o, _v} -> script_address(o.locking_script) == address end)
+
+    satoshis = outs |> Enum.map(fn {o, _v} -> o.satoshis end) |> Enum.sum()
+
+    token_id =
+      outs
+      |> Enum.map(fn {_o, v} -> Map.get(stas_attrs.token_id_per_vout, v) end)
+      |> Enum.find(&(&1 != nil))
+
+    {satoshis, token_id}
+  end
+
+  defp address_flow(_tx, address, "out", spent_utxos, _stas_attrs) do
+    owned = Enum.filter(spent_utxos, fn u -> u.address == address end)
+    satoshis = owned |> Enum.map(& &1.satoshis) |> Enum.sum()
+    token_id = owned |> Enum.map(& &1.token_id) |> Enum.find(&(&1 != nil))
+    {satoshis, token_id}
   end
 
   # Derive a base58 P2PKH address for an output's locking script. Handles

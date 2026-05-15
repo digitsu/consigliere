@@ -9,10 +9,15 @@ defmodule Athanor.Services.Balance do
 
   @doc """
   Returns the BSV balance (in satoshis) for an address.
+
+  Only plain (non-token) UTXOs count: a STAS / STAS 3.0 output's satoshis
+  are locked behind the token script and are not spendable as ordinary
+  BSV, so any UTXO with a `token_type` is excluded — including
+  forged-issuance outputs that carry `token_type` but a nil `token_id`.
   """
   def get_balance(address) do
     Utxo
-    |> where([u], u.address == ^address and u.is_spent == false and is_nil(u.token_id))
+    |> where([u], u.address == ^address and u.is_spent == false and is_nil(u.token_type))
     |> select([u], sum(u.satoshis))
     |> Repo.one() || 0
   end
