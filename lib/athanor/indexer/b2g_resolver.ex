@@ -97,7 +97,7 @@ defmodule Athanor.Indexer.B2gResolver do
         case Repo.get_by(MetaTransaction, txid: txid_binary) do
           %MetaTransaction{hex: hex} when hex != nil ->
             case BSV.Transaction.from_hex(hex) do
-              {:ok, tx, _rest} -> {:ok, tx}
+              {:ok, tx} -> {:ok, tx}
               {:error, reason} -> {:error, reason}
             end
 
@@ -133,7 +133,7 @@ defmodule Athanor.Indexer.B2gResolver do
 
   defp parse_hex(hex) do
     case BSV.Transaction.from_hex(hex) do
-      {:ok, tx, _rest} -> {:ok, tx}
+      {:ok, tx} -> {:ok, tx}
       {:error, reason} -> {:error, reason}
     end
   end

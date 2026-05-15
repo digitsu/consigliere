@@ -10,8 +10,10 @@ defmodule Athanor.Indexer.TransactionProcessor do
   use GenServer
   require Logger
 
+  import Ecto.Query
+
   alias Athanor.Repo
-  alias Athanor.Schema.{MetaTransaction, AddressHistory, WatchingToken}
+  alias Athanor.Schema.{MetaTransaction, AddressHistory, WatchingToken, Utxo}
   alias Athanor.Indexer.UtxoManager
   alias Athanor.Tokens.{Classifier, SpendType, Stas3Meta}
   alias BSV.Tokens.Script.Reader, as: ScriptReader
@@ -68,6 +70,13 @@ defmodule Athanor.Indexer.TransactionProcessor do
     all_addresses = extract_all_addresses(tx)
     all_token_ids = extract_all_token_ids(classified)
 
+    # Compute STAS lineage attributes — the five-flag set + per-output
+    # token-id decisions ported from dxs-consigliere's `UpdateStasAttributesQuery`
+    # patch. MUST run before MetaTransaction insert (flags persisted on
+    # `metadata`) and before output indexing (`token_id_per_vout` overrides
+    # the naive script-derived tag).
+    stas_attrs = compute_stas_attributes(tx, classified)
+
     # 1. Store MetaTransaction
     meta_attrs = %{
       txid: txid_binary,
@@ -77,7 +86,7 @@ defmodule Athanor.Indexer.TransactionProcessor do
       timestamp: System.os_time(:second),
       addresses: all_addresses,
       token_ids: all_token_ids,
-      metadata: %{}
+      metadata: stas_attrs.flags
     }
 
     _meta_result =
@@ -120,11 +129,7 @@ defmodule Athanor.Indexer.TransactionProcessor do
       output = Enum.at(tx.outputs, vout)
       script_binary = BSV.Script.to_binary(output.locking_script)
 
-      address =
-        case BSV.Script.Address.from_script(output.locking_script) do
-          {:ok, addr} -> addr
-          :error -> nil
-        end
+      address = script_address(output.locking_script)
 
       token_type =
         case script_type do
@@ -145,19 +150,35 @@ defmodule Athanor.Indexer.TransactionProcessor do
           )
 
         true ->
+          # `token_id` from `Classifier.classify_outputs/1` is the protoID
+          # the SCRIPT self-asserts. The lineage-checked tag computed in
+          # `compute_stas_attributes/2` (issuance gate + transfer
+          # inheritance + illegal-root taint) overrides it. If the script
+          # isn't STAS-templated, `token_id_per_vout[vout]` is `nil`.
+          effective_token_id = Map.get(stas_attrs.token_id_per_vout, vout)
+
           utxo_attrs = %{
             txid: txid_binary,
             vout: vout,
             address: address,
             satoshis: output.satoshis,
             script_hex: Base.encode16(script_binary, case: :lower),
-            token_id: token_id,
+            token_id: effective_token_id,
             token_type: token_type,
             is_spent: false,
             block_height: block_height
           }
 
-          UtxoManager.create_utxo(utxo_attrs)
+          case UtxoManager.create_utxo(utxo_attrs) do
+            {:ok, _} ->
+              :ok
+
+            {:error, %Ecto.Changeset{} = cs} ->
+              Logger.warning(
+                "UTXO insert rejected for #{txid_hex} vout=#{vout}: " <>
+                  inspect(cs.errors)
+              )
+          end
 
           if script_type == :stas3 do
             seed_watching_token_metadata(token_id, script_binary)
@@ -204,17 +225,312 @@ defmodule Athanor.Indexer.TransactionProcessor do
       "Indexed tx #{txid_hex} (#{length(matched_addresses)} addrs, #{length(matched_tokens)} tokens)"
     )
 
+    # If any prior tx was deferred waiting on this txid as a parent,
+    # re-run their lineage now. Cascades transitively for chains.
+    reprocess_waiters(txid_hex)
+
     {:ok, txid_hex}
+  end
+
+  # Find every MetaTransaction whose `metadata["missing_transactions"]`
+  # contains `parent_txid_hex`, re-run lineage, persist the updated
+  # flags + per-output token_id decisions, and cascade for any waiter
+  # whose missing-parent list has now been fully resolved.
+  #
+  # Port of dxs-consigliere's `StasAttributesMissingTransactions`
+  # background task (see `BackgroundTasks/StasAttributesMissingTransactions.cs`).
+  # The C# version polls every 30 s; we trigger inline because our
+  # Postgres backend lets us read parent state synchronously without
+  # waiting on Raven's eventually-consistent map-reduce index.
+  defp reprocess_waiters(parent_txid_hex) do
+    # Use jsonb_build_array on the server side. Passing the JSON-encoded
+    # array via a parameter and casting `::jsonb` was hitting a Postgrex
+    # parameter-type edge case where the operator would resolve against
+    # a non-jsonb LHS — `jsonb_build_array(text)` keeps the cast inside
+    # the database.
+    waiters =
+      Repo.all(
+        from m in MetaTransaction,
+          where:
+            fragment(
+              "? -> 'missing_transactions' @> jsonb_build_array(?::text)",
+              m.metadata,
+              ^parent_txid_hex
+            )
+      )
+
+    Enum.each(waiters, fn waiter -> reindex_lineage(waiter) end)
+  end
+
+  defp reindex_lineage(%MetaTransaction{hex: nil}), do: :ok
+
+  defp reindex_lineage(%MetaTransaction{txid: txid_bin, hex: tx_hex} = waiter) do
+    with {:ok, tx} <- BSV.Transaction.from_hex(tx_hex) do
+      classified = Classifier.classify_outputs(tx)
+      stas_attrs = compute_stas_attributes(tx, classified)
+
+      previously_deferred? =
+        not Map.get(waiter.metadata || %{}, "all_stas_inputs_known", true)
+
+      now_resolved? = stas_attrs.flags["all_stas_inputs_known"] == true
+
+      waiter
+      |> MetaTransaction.changeset(%{metadata: stas_attrs.flags})
+      |> Repo.update()
+
+      Enum.each(stas_attrs.token_id_per_vout, fn {vout, new_token_id} ->
+        case Repo.get_by(Utxo, txid: txid_bin, vout: vout) do
+          nil ->
+            :ok
+
+          %Utxo{token_id: ^new_token_id} ->
+            :ok
+
+          utxo ->
+            utxo
+            |> Utxo.changeset(%{token_id: new_token_id})
+            |> Repo.update()
+        end
+      end)
+
+      # Cascade: if this waiter was previously deferred and is now
+      # resolved, anything waiting on it can also be reprocessed.
+      if previously_deferred? and now_resolved? do
+        reprocess_waiters(display_hex(txid_bin))
+      end
+
+      :ok
+    else
+      _ -> :ok
+    end
+  end
+
+  # Port of dxs-consigliere's `UpdateStasAttributesQuery` (TransactionStore.cs
+  # §81-188). Computes the five-flag lineage set + per-output token_id
+  # decisions in a single pass over the tx, using ONLY direct-parent
+  # lookups (no back-to-genesis walking).
+  #
+  #   * `is_stas` — any STAS input or any STAS output
+  #   * `is_issue` — has STAS outputs AND zero STAS inputs (issuance candidate)
+  #   * `is_valid_issue` — `is_issue` ∧ all inputs known ∧ single protoID
+  #     across outputs ∧ that protoID == HASH160(Vin[0]'s spent output address)
+  #   * `all_stas_inputs_known` — every STAS-typed parent UTXO is locally
+  #     indexed (or there are no STAS inputs)
+  #   * `illegal_roots` — set of ancestor txids that failed `is_valid_issue`,
+  #     propagated forward by transfers
+  #
+  # `token_id_per_vout` is the authoritative tag the indexer writes onto
+  # `utxos.token_id`:
+  #
+  #   * issuance txn (valid): script-derived protoID for each STAS output
+  #   * issuance txn (invalid/forged): `nil` — script self-asserts a
+  #     protoID that doesn't match `HASH160(Vin[0])`, so we refuse to
+  #     admit the output to that issuance set
+  #   * transfer txn: protoID inherited from the parent STAS UTXO Vin[0]
+  #     spent — the script's self-asserted protoID is cross-checked and
+  #     only honoured when it agrees with the parent's tag
+  defp compute_stas_attributes(tx, classified) do
+    parent_outputs = lookup_parent_outputs(tx)
+
+    # A STAS-typed parent UTXO whose own `token_id` is still nil is
+    # itself deferred — we don't know its lineage yet, so we can't
+    # inherit from it. Treat such parents like unindexed parents.
+    resolved_parent? = fn
+      nil -> false
+      %Utxo{token_id: nil, token_type: t} when t in ["stas", "stas3"] -> false
+      _ -> true
+    end
+
+    stas_inputs =
+      Enum.filter(parent_outputs, fn {_idx, p} ->
+        p && p.token_type in ["stas", "stas3"] && p.token_id != nil
+      end)
+
+    stas_outputs = Enum.filter(classified, fn {_v, t, _} -> t in [:stas, :stas3, :stas_btg] end)
+    has_stas_outputs = stas_outputs != []
+
+    # Missing parents = inputs whose parent we either haven't indexed
+    # or have indexed in a still-deferred state. For a tx with STAS
+    # outputs, the presence of ANY missing parent makes lineage
+    # undecidable until the reprocessor cycles back.
+    missing_parents =
+      if Transaction.is_coinbase?(tx) do
+        []
+      else
+        tx.inputs
+        |> Enum.filter(fn input ->
+          parent = Map.get(parent_outputs, {input.source_txid, input.source_tx_out_index})
+          not resolved_parent?.(parent)
+        end)
+        |> Enum.map(fn input -> display_hex(input.source_txid) end)
+        |> Enum.uniq()
+      end
+
+    deferred? = has_stas_outputs and missing_parents != []
+    is_stas = stas_inputs != [] or has_stas_outputs
+
+    all_stas_inputs_known = not deferred?
+
+    {is_issue, is_valid_issue, illegal_roots, token_id_per_vout} =
+      cond do
+        deferred? ->
+          # Defer all lineage decisions until missing parents arrive.
+          # Outputs index for satoshi accounting but token_id stays nil.
+          {false, false, [], untagged_outputs(stas_outputs)}
+
+        is_stas and stas_inputs == [] and has_stas_outputs ->
+          {valid, roots, vout_map} = decide_issuance(tx, parent_outputs, stas_outputs, true)
+          {true, valid, roots, vout_map}
+
+        is_stas ->
+          {valid, roots, vout_map} = decide_transfer(stas_inputs, stas_outputs, parent_outputs)
+          {false, valid, roots, vout_map}
+
+        true ->
+          {false, false, [], %{}}
+      end
+
+    %{
+      flags: %{
+        "is_stas" => is_stas,
+        "is_issue" => is_issue,
+        "is_valid_issue" => is_valid_issue,
+        "all_stas_inputs_known" => all_stas_inputs_known,
+        "illegal_roots" => illegal_roots,
+        "missing_transactions" => missing_parents
+      },
+      token_id_per_vout: token_id_per_vout
+    }
+  end
+
+  defp untagged_outputs(stas_outputs) do
+    Enum.into(stas_outputs, %{}, fn {v, _t, _tid} -> {v, nil} end)
+  end
+
+  # Bitcoin txids are displayed in REVERSE byte order from their internal
+  # SHA256d representation. `Transaction.tx_id_hex/1` and block-explorer
+  # APIs use display order; `input.source_txid` and `Transaction.txid_binary/1`
+  # return internal order. We store all txid-as-string fields
+  # (`missing_transactions`, `illegal_roots`) in display order so a human
+  # reading the JSONB blob sees the same hex they'd find in a block
+  # explorer.
+  defp display_hex(<<_::binary-size(32)>> = txid_binary) do
+    txid_binary
+    |> :binary.bin_to_list()
+    |> Enum.reverse()
+    |> :binary.list_to_bin()
+    |> Base.encode16(case: :lower)
+  end
+
+  # Build a map of `{source_txid, vout} => parent_utxo_or_nil` for every
+  # non-coinbase input. Caches `UtxoManager` lookups so downstream lineage
+  # decisions don't re-query.
+  defp lookup_parent_outputs(tx) do
+    if Transaction.is_coinbase?(tx) do
+      %{}
+    else
+      Enum.reduce(tx.inputs, %{}, fn input, acc ->
+        key = {input.source_txid, input.source_tx_out_index}
+        parent = Repo.get_by(Utxo, txid: input.source_txid, vout: input.source_tx_out_index)
+        Map.put(acc, key, parent)
+      end)
+    end
+  end
+
+  # Issuance branch: protoID across STAS outputs must be unique AND equal
+  # `HASH160(Vin[0]'s spent output)`. `parent_outputs[{Vin[0].txid, vout}]`
+  # gives us that address; we decode the base58 to recover the PKH.
+  defp decide_issuance(tx, parent_outputs, stas_outputs, all_known) do
+    output_protos =
+      stas_outputs
+      |> Enum.map(fn {_v, _t, tid} -> tid end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    single_proto = match?([_], output_protos)
+    [vin0 | _] = tx.inputs
+    parent = Map.get(parent_outputs, {vin0.source_txid, vin0.source_tx_out_index})
+
+    vin0_pkh_hex =
+      case parent do
+        %Utxo{address: addr} when is_binary(addr) -> address_to_pkh_hex(addr)
+        _ -> nil
+      end
+
+    valid =
+      all_known and single_proto and
+        vin0_pkh_hex != nil and hd(output_protos) == vin0_pkh_hex
+
+    token_id_per_vout =
+      if valid do
+        Enum.into(stas_outputs, %{}, fn {v, _t, tid} -> {v, tid} end)
+      else
+        # Forged/invalid issuance: don't tag any output with the claimed
+        # protoID. The output is still indexed (for satoshi accounting)
+        # but it's never admitted to the issuance set.
+        Enum.into(stas_outputs, %{}, fn {v, _t, _tid} -> {v, nil} end)
+      end
+
+    illegal_roots =
+      if valid, do: [], else: [display_hex(Transaction.txid_binary(tx))]
+
+    {valid, illegal_roots, token_id_per_vout}
+  end
+
+  # Transfer branch: child outputs inherit the parent's `token_id`. Vin[0]
+  # is the spent STAS UTXO; if it carries token_id P, the child outputs
+  # join the same issuance set when their script self-asserts P. A child
+  # that self-asserts a different protoID is treated as forged: untagged,
+  # tx added to `illegal_roots`.
+  defp decide_transfer(stas_inputs, stas_outputs, _parent_outputs) do
+    parent_token_id =
+      case stas_inputs do
+        [{_idx, %Utxo{token_id: tid}} | _] -> tid
+        _ -> nil
+      end
+
+    parent_illegal_roots =
+      stas_inputs
+      |> Enum.flat_map(fn {_idx, p} -> (p.token_id == nil && []) || [] end)
+      |> Enum.uniq()
+
+    {ok_outputs, bad_outputs} =
+      Enum.split_with(stas_outputs, fn {_v, _t, tid} ->
+        tid == parent_token_id and parent_token_id != nil
+      end)
+
+    token_id_per_vout =
+      Map.merge(
+        Enum.into(ok_outputs, %{}, fn {v, _, _} -> {v, parent_token_id} end),
+        Enum.into(bad_outputs, %{}, fn {v, _, _} -> {v, nil} end)
+      )
+
+    # If the parent UTXO itself was untagged (forged ancestor / not
+    # admitted), every child output inherits that taint.
+    illegal_roots =
+      if parent_token_id == nil and stas_inputs != [] do
+        Enum.map(stas_inputs, fn {_, p} -> display_hex(p.txid) end)
+      else
+        parent_illegal_roots
+      end
+      |> Enum.uniq()
+
+    {false, illegal_roots, token_id_per_vout}
+  end
+
+  # Decode a mainnet base58check P2PKH address to its 20-byte HASH160 in
+  # lower-hex form, matching the protoID encoding used elsewhere in the
+  # indexer (`Classifier.classify_outputs` returns hex protoIDs).
+  defp address_to_pkh_hex(addr) do
+    case BSV.Base58.check_decode(addr) do
+      {:ok, {0x00, <<pkh::binary-size(20)>>}} -> Base.encode16(pkh, case: :lower)
+      _ -> nil
+    end
   end
 
   defp extract_all_addresses(tx) do
     tx.outputs
-    |> Enum.map(fn output ->
-      case BSV.Script.Address.from_script(output.locking_script) do
-        {:ok, addr} -> addr
-        :error -> nil
-      end
-    end)
+    |> Enum.map(fn output -> script_address(output.locking_script) end)
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
   end
@@ -229,26 +545,39 @@ defmodule Athanor.Indexer.TransactionProcessor do
   defp determine_direction(tx, address) do
     output_addrs =
       tx.outputs
-      |> Enum.map(fn o ->
-        case BSV.Script.Address.from_script(o.locking_script) do
-          {:ok, a} -> a
-          :error -> nil
-        end
-      end)
+      |> Enum.map(fn o -> script_address(o.locking_script) end)
 
     if address in output_addrs, do: "in", else: "out"
   end
 
   defp calculate_address_amount(tx, address, _classified) do
     tx.outputs
-    |> Enum.filter(fn output ->
-      case BSV.Script.Address.from_script(output.locking_script) do
-        {:ok, ^address} -> true
-        _ -> false
-      end
-    end)
+    |> Enum.filter(fn output -> script_address(output.locking_script) == address end)
     |> Enum.map(& &1.satoshis)
     |> Enum.sum()
+  end
+
+  # Derive a base58 P2PKH address for an output's locking script. Handles
+  # the standard P2PKH template via `BSV.Script.Address.from_script/2` and
+  # the STAS 3.0 template by lifting the 20-byte owner PKH from the script
+  # body (spec v0.1 §5.2.2) and base58-checking it as a mainnet address.
+  # Returns `nil` for templates we don't know how to address (e.g. bare
+  # OP_RETURN, custom scripts) — `:utxos.address` is nullable to allow
+  # those rows to still record satoshis + script for accounting.
+  defp script_address(%BSV.Script{} = script) do
+    case BSV.Script.Address.from_script(script) do
+      {:ok, addr} ->
+        addr
+
+      :error ->
+        case ScriptReader.read_locking_script(BSV.Script.to_binary(script)) do
+          %{script_type: :stas3, stas3: %{owner: <<owner::binary-size(20)>>}} ->
+            BSV.Base58.check_encode(owner, 0x00)
+
+          _ ->
+            nil
+        end
+    end
   end
 
   # Walk the transaction's inputs and return the first observed STAS 3.0

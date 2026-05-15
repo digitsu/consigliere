@@ -37,8 +37,8 @@ defmodule Athanor.Schema.Utxo do
     timestamps(type: :utc_datetime)
   end
 
-  @required_fields ~w(txid vout address satoshis script_hex)a
-  @optional_fields ~w(token_id token_type stas3_op is_spent spent_txid block_height)a
+  @required_fields ~w(txid vout satoshis script_hex)a
+  @optional_fields ~w(address token_id token_type stas3_op is_spent spent_txid block_height)a
 
   @doc """
   Builds a changeset for inserting or updating a UTXO record.
