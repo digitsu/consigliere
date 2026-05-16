@@ -410,6 +410,17 @@ defmodule Athanor.Indexer.TransactionProcessor do
           {false, false, [], %{}}
       end
 
+    # Redemption: a transfer that burns a token back to plain BSV by
+    # paying a P2PKH output to the issuance's redemption address (the
+    # address whose HASH160 is the protoID). Only meaningful for a
+    # settled, non-issuance STAS tx.
+    {is_redeem, redeem_address} =
+      if is_stas and not is_issue and not deferred? do
+        detect_redemption(tx, classified, stas_parents)
+      else
+        {false, nil}
+      end
+
     %{
       flags: %{
         "is_stas" => is_stas,
@@ -417,11 +428,43 @@ defmodule Athanor.Indexer.TransactionProcessor do
         "is_valid_issue" => is_valid_issue,
         "all_stas_inputs_known" => all_stas_inputs_known,
         "illegal_roots" => illegal_roots,
-        "missing_transactions" => missing_parents
+        "missing_transactions" => missing_parents,
+        "is_redeem" => is_redeem,
+        "redeem_address" => redeem_address
       },
       token_id_per_vout: token_id_per_vout,
       parent_outputs: parent_outputs
     }
+  end
+
+  # A transfer is a redemption if it pays a plain P2PKH output to the
+  # redemption address of one of the STAS tokens it spends — i.e. an
+  # output address whose HASH160 equals a spent parent's protoID
+  # (`token_id`). Returns `{is_redeem?, redeem_address_or_nil}`.
+  defp detect_redemption(tx, classified, stas_parents) do
+    parent_protos =
+      stas_parents
+      |> Enum.map(fn {utxo, _meta, _class} -> utxo.token_id end)
+      |> Enum.reject(&is_nil/1)
+      |> MapSet.new()
+
+    redeem_address =
+      if MapSet.size(parent_protos) == 0 do
+        nil
+      else
+        Enum.find_value(classified, fn
+          {vout, :p2pkh, _} ->
+            output = Enum.at(tx.outputs, vout)
+            addr = script_address(output.locking_script)
+            pkh = addr && address_to_pkh_hex(addr)
+            if pkh && MapSet.member?(parent_protos, pkh), do: addr, else: nil
+
+          _ ->
+            nil
+        end)
+      end
+
+    {redeem_address != nil, redeem_address}
   end
 
   # Classify a single input's parent for lineage purposes:
