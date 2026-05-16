@@ -453,7 +453,7 @@ defmodule Athanor.Indexer.TransactionProcessor do
         nil
       else
         Enum.find_value(classified, fn
-          {vout, :p2pkh, _} ->
+          {vout, type, _} when type in [:p2pkh, :p2mpkh] ->
             output = Enum.at(tx.outputs, vout)
             addr = script_address(output.locking_script)
             pkh = addr && address_to_pkh_hex(addr)
@@ -705,9 +705,18 @@ defmodule Athanor.Indexer.TransactionProcessor do
         addr
 
       :error ->
-        case ScriptReader.read_locking_script(BSV.Script.to_binary(script)) do
+        bin = BSV.Script.to_binary(script)
+
+        case ScriptReader.read_locking_script(bin) do
           %{script_type: :stas3, stas3: %{owner: <<owner::binary-size(20)>>}} ->
             BSV.Base58.check_encode(owner, 0x00)
+
+          %{script_type: :p2mpkh} ->
+            # STAS 3.0 v0.1 §10.2 P2MPKH: the 20-byte MPKH sits at offset
+            # 3 (after OP_DUP OP_HASH160 OP_DATA_20), exactly like a P2PKH
+            # pubkey hash, so it base58-encodes into a mainnet address.
+            <<_::binary-size(3), mpkh::binary-size(20), _::binary>> = bin
+            BSV.Base58.check_encode(mpkh, 0x00)
 
           _ ->
             nil

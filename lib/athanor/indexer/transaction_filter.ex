@@ -181,8 +181,13 @@ defmodule Athanor.Indexer.TransactionFilter do
     |> then(fn {addrs, tokens} -> {Enum.uniq(addrs), Enum.uniq(tokens)} end)
   end
 
-  # Extracts a P2PKH address from a locking script and appends it to the
-  # accumulator if it exists in the :watched_addresses ETS table.
+  # Extracts a watchable address from a locking script and appends it to
+  # the accumulator if it is in the :watched_addresses ETS table.
+  #
+  # Handles standard P2PKH and the STAS 3.0 v0.1 §10.2 P2MPKH locking
+  # script (issuance/redemption boundary UTXOs). The P2MPKH MPKH sits at
+  # offset 3 just like a P2PKH pubkey hash, so it base58-encodes into the
+  # same address space.
   @spec check_address(BSV.Script.t(), [String.t()]) :: [String.t()]
   defp check_address(script, acc) do
     case BSV.Script.Address.from_script(script) do
@@ -190,8 +195,21 @@ defmodule Athanor.Indexer.TransactionFilter do
         if :ets.member(@addresses_table, address), do: [address | acc], else: acc
 
       :error ->
-        acc
+        bin = BSV.Script.to_binary(script)
+
+        case BSV.Tokens.Script.Reader.read_locking_script(bin) do
+          %{script_type: :p2mpkh} ->
+            <<_::binary-size(3), mpkh::binary-size(20), _::binary>> = bin
+            address = BSV.Base58.check_encode(mpkh, 0x00)
+            if :ets.member(@addresses_table, address), do: [address | acc], else: acc
+
+          _ ->
+            acc
+        end
     end
+  rescue
+    # Malformed scripts the reader can't handle
+    _ -> acc
   end
 
   # Parses a locking script binary for STAS or STAS 3 token data and appends
